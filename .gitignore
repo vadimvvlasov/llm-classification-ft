@@ -1,1 +1,5 @@
 .env
+data/llm-classification-finetuning.zip
+data/sample_submission.csv
+data/test.csv
+data/train.csv
