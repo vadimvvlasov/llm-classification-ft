@@ -90,7 +90,139 @@ uv pip install -r requirements.txt
 
 ---
 
-## Шаг 4: Тренировать модель
+## Шаг 3.5: Kaggle Notebooks (запуск в облаке)
+
+Если нет GPU или хочешь работать в облаке:
+
+### Вариант A: Kaggle Notebook
+
+1. Открыть [kaggle.com/competitions/llm-classification-finetuning/code](https://www.kaggle.com/competitions/llm-classification-finetuning/code)
+2. Нажать **New Notebook**
+3. Скопировать код из `notebooks/` или `train.py` в ячейки
+4. Подключить GPU: **Settings** → **Accelerator** → GPU (P100 / T4)
+5. Запустить ячейки
+
+### Вариант B: Kaggle API (клонирование ноутбука)
+
+```bash
+# Скачать готовый ноутбук с Kaggle
+kaggle kernels pull <kernel-slug> -p ./notebooks/
+
+# Или склонировать из GitHub
+git clone https://github.com/<repo>/llm-classification-ft.git
+cd llm-classification-ft
+```
+
+### Вариант C: Google Colab
+
+```bash
+# Загрузить файлы в Google Drive
+# Или клонировать репозиторий в Colab:
+!git clone https://github.com/<username>/llm-classification-ft.git
+%cd llm-classification-ft
+!pip install -r requirements.txt
+```
+
+В Colab: **Runtime** → **Change runtime type** → GPU T4 → **Save**
+
+### Ноутбуки для Kaggle
+
+| Ноутбук | Описание |
+|---------|----------|
+| `01_eda.ipynb` | Анализ данных, bias investigation |
+| `02_tfidf_baseline.ipynb` | TF-IDF baseline |
+| `03_sbert_baseline.ipynb` | SBERT baseline |
+| `03b_tabpfn_sbert.ipynb` | TabPFN на SBERT embeddings |
+| `04_deberta_finetuning.ipynb` | DeBERTa finetuning |
+| `kaggle_submission.ipynb` | **Single notebook — все в одном** (для Kaggle submission) |
+
+### Важно: Kaggle Notebooks лимиты
+
+- GPU: 30 часов/неделю (P100) или 12 часов/неделю (T4)
+- RAM: ~16 GB
+- Нет доступа к файлам вне ноутбука — загружать данные через **Add Data**
+- Интернет ограничен при приватных соревнованиях
+
+---
+
+## Kaggle Code Competition — Как отправить
+
+Это **Code Competition** — все работает через Kaggle Notebooks. Нужно сделать **один notebook** со всем кодом.
+
+### Подготовка
+
+1. Скачать `kaggle_submission.ipynb` из папки `notebooks/`
+2. Открыть [kaggle.com/competitions/llm-classification-finetuning/code](https://www.kaggle.com/competitions/llm-classification-finetuning/code)
+3. Нажать **New Notebook** → **File** → **Upload Notebook** → загрузить `kaggle_submission.ipynb`
+
+### Пошаговая инструкция
+
+#### Шаг 1: Добавить данные
+
+1. В ноутбуке нажать **Add Data** (справа)
+2. Перейти на вкладку **Competition Data**
+3. Найти `llm-classification-finetuning` → нажать **Add**
+4. Данные появятся в `/kaggle/input/llm-classification-finetuning/`
+
+#### Шаг 2: Подключить GPU
+
+1. Нажать **Settings** (шестеренка справа)
+2. **Accelerator**: выбрать **GPU T4** (или P100)
+3. **Internet**: убедиться что включен (для скачивания models)
+4. **Save**
+
+#### Шаг 3: Проверить код
+
+Код уже настроен на `/kaggle/input/` — ничего менять не нужно.
+
+Ячейки выполняются по порядку:
+1. Setup & Imports
+2. Load Data
+3. Phase 1: TF-IDF
+4. Phase 2: SBERT (займет ~5 мин)
+5. TabPFN (если данных < 10K)
+6. Phase 3: DeBERTa (займет ~15 мин на T4)
+7. Phase 4: Ensemble
+8. Generate Submission
+
+#### Шаг 4: Запустить все ячейки
+
+1. Нажать **Run All** (Shift+Enter для одной ячейки)
+2. Следить за прогрессом в tqdm bars
+3. Время выполнения: ~30-40 минут на T4
+
+#### Шаг 5: Commit и Submit
+
+1. После успешного выполнения всех ячеек → нажать **Commit** (кнопка вверху справа)
+2. Kaggle запустит ноутбук заново (без интернета, как при реальной проверке)
+3. Дождаться результата commit (~10-15 минут)
+4. После успешного commit → нажать **Submit**
+
+### Проверка перед commit
+
+Убедиться что:
+- ✅ Ноутбук выполняется от начала до конца без ошибок
+- ✅ В конце есть файл `submission.csv` в `/kaggle/working/`
+- ✅ `submission.csv` содержит колонки: `id`, `winner_model_a`, `winner_model_b`, `winner_tie`
+- ✅ Сумма вероятностей в каждой строке ≈ 1.0
+
+### Возможные проблемы
+
+| Проблема | Решение |
+|----------|---------|
+| Commit timeout (>9 часов) | Уменьшить DeBERTa epochs до 2, или batch_size до 4 |
+| GPU OOM | Уменьшить MAX_LENGTH до 384, batch_size до 4 |
+| TabPFN fails | Notebook уже обрабатывает — просто пропустит |
+| "Internet disabled" на commit | Убедиться что модели уже загружены в session (run before commit) |
+
+### Важно
+
+- **Commit** — это реальная проверка (без инета, time-limited)
+- **Submit** — отправляет результат commit в лидерборд
+- Между commit и score может быть до 15 минут variance
+- Можно делать несколько commits для улучшения
+
+---
 
 ### Вариант A: Запустить весь пайплайн (TF-IDF → SBERT → DeBERTa → Ensemble)
 
@@ -107,6 +239,7 @@ python train.py
 # 01_eda.ipynb         — анализ данных
 # 02_tfidf_baseline.ipynb  — TF-IDF baseline
 # 03_sbert_baseline.ipynb  — SBERT baseline
+# 03b_tabpfn_sbert.ipynb   — TabPFN on SBERT embeddings
 # 04_deberta_finetuning.ipynb — DeBERTa finetuning
 # 05_ensemble_submission.ipynb — ensemble и submission
 ```
