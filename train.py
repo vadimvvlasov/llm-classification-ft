@@ -172,8 +172,59 @@ def tfidf_enhanced(train_df, test_df):
     return test_preds, oof_preds
 
 
+# === Phase 1.5: TabPFN on SBERT embeddings ===
+def tabpfn_on_sbert_embeddings(X_train_sbert, X_test_sbert, y_train):
+    """TabPFN classifier on precomputed SBERT embeddings.
+
+    TabPFN v2: max 10,000 rows, max 500 features.
+    SBERT all-MiniLM-L6-v2 produces 384-dim embeddings + handcrafted = ~390 features.
+    """
+    print("\n=== Phase 1.5: TabPFN on SBERT embeddings ===")
+
+    try:
+        from tabpfn import TabPFNClassifier
+    except ImportError:
+        print("TabPFN not installed. Run: uv pip install tabpfn")
+        return None, None
+
+    n_samples = len(y_train)
+    n_features = X_train_sbert.shape[1]
+
+    # Check limits
+    if n_samples > 10000:
+        print(f"  Warning: {n_samples} samples exceeds TabPFN v2 limit (10000). Skipping.")
+        return None, None
+
+    if n_features > 500:
+        print(f"  Warning: {n_features} features exceeds TabPFN v2 limit (500). Skipping.")
+        return None, None
+
+    print(f"  Running TabPFN: {n_samples} samples, {n_features} features")
+    print(f"  Device: {DEVICE}")
+
+    # TabPFN natively supports multi-class up to 10 classes
+    clf = TabPFNClassifier(
+        n_estimators=8,
+        device=DEVICE,
+        random_state=RANDOM_SEED
+    )
+
+    # OOF via cross_val_predict
+    from sklearn.model_selection import cross_val_predict
+    oof_preds = cross_val_predict(clf, X_train_sbert, y_train, cv=5, method='predict_proba')
+    oof_loss = log_loss(y_train, oof_preds)
+    print(f"  TabPFN OOF log_loss: {oof_loss:.4f}")
+
+    # Fit on all data, predict test
+    clf.fit(X_train_sbert, y_train)
+    test_preds = clf.predict_proba(X_test_sbert)
+
+    return test_preds, oof_preds
+
+
 # === Phase 2: SBERT + Features ===
-def sbert_enhanced(train_df, test_df):
+def sbert_enhanced(train_df, test_df, cache_path=None):
+    """SBERT embeddings + optional TabPFN."""
     print("\n=== Phase 2: Enhanced SBERT ===")
     from sentence_transformers import SentenceTransformer
 
@@ -215,6 +266,10 @@ def sbert_enhanced(train_df, test_df):
         test_df["response_a"], test_df["response_b"], test_df["prompt"]
     )
 
+    del sbert
+    gc.collect()
+    torch.cuda.empty_cache() if DEVICE == "cuda" else None
+
     y_train = train_df["target"].values
 
     def model_fn(X, y):
@@ -227,11 +282,10 @@ def sbert_enhanced(train_df, test_df):
     model.fit(X_train, y_train)
     test_preds = model.predict_proba(X_test)
 
-    del sbert
-    gc.collect()
-    torch.cuda.empty_cache() if DEVICE == "cuda" else None
+    # Also run TabPFN on same features
+    test_preds_tabpfn, oof_tabpfn = tabpfn_on_sbert_embeddings(X_train, X_test, y_train)
 
-    return test_preds, oof_preds
+    return test_preds, oof_preds, test_preds_tabpfn, oof_tabpfn
 
 
 # === Phase 3: DeBERTa Finetuning ===
@@ -493,13 +547,18 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"TF-IDF failed: {e}")
 
-    # Phase 2: SBERT
+    # Phase 2: SBERT (also runs TabPFN internally)
     try:
-        test_preds_sbert, oof_sbert = sbert_enhanced(train_df, test_df)
+        test_preds_sbert, oof_sbert, test_preds_tabpfn, oof_tabpfn = sbert_enhanced(train_df, test_df)
         predictions["sbert"] = test_preds_sbert
         oof_predictions["sbert"] = oof_sbert
+        if test_preds_tabpfn is not None:
+            predictions["tabpfn"] = test_preds_tabpfn
+            oof_predictions["tabpfn"] = oof_tabpfn
     except Exception as e:
-        print(f"SBERT failed: {e}")
+        print(f"SBERT/TabPFN failed: {e}")
+        import traceback
+        traceback.print_exc()
 
     # Phase 3: DeBERTa (only if GPU available and data looks real)
     if DEVICE == "cuda" and len(train_df) > 1000:
@@ -520,26 +579,51 @@ if __name__ == "__main__":
         best_loss = 999
         best_weights = None
 
-        from itertools import product
-        # Grid search weights
-        for w_tfidf in np.arange(0.0, 1.1, 0.1):
-            for w_sbert in np.arange(0.0, 1.1 - w_tfidf, 0.1):
-                w_deberta = 1.0 - w_tfidf - w_sbert
-                if w_deberta < 0:
-                    continue
+        # Grid search weights (4 models: tfidf, sbert, tabpfn, deberta)
+        names = list(predictions.keys())
+        n_models = len(names)
 
-                ens_oof = np.zeros_like(oof_predictions["tfidf"])
-                if "tfidf" in oof_predictions:
-                    ens_oof += w_tfidf * oof_predictions["tfidf"]
-                if "sbert" in oof_predictions:
-                    ens_oof += w_sbert * oof_predictions["sbert"]
-                if "deberta" in oof_predictions and w_deberta > 0:
-                    ens_oof += w_deberta * oof_predictions["deberta"]
-
+        if n_models == 2:
+            for w0 in np.arange(0.0, 1.1, 0.1):
+                w1 = 1.0 - w0
+                ens_oof = np.zeros_like(oof_predictions[names[0]])
+                ens_oof += w0 * oof_predictions[names[0]]
+                ens_oof += w1 * oof_predictions[names[1]]
                 loss = log_loss(y_true, ens_oof)
                 if loss < best_loss:
                     best_loss = loss
-                    best_weights = {"tfidf": w_tfidf, "sbert": w_sbert, "deberta": w_deberta}
+                    best_weights = {names[0]: w0, names[1]: w1}
+        elif n_models == 3:
+            for w0 in np.arange(0.0, 1.1, 0.1):
+                for w1 in np.arange(0.0, 1.1 - w0, 0.1):
+                    w2 = 1.0 - w0 - w1
+                    if w2 < 0:
+                        continue
+                    ens_oof = np.zeros_like(oof_predictions[names[0]])
+                    ens_oof += w0 * oof_predictions[names[0]]
+                    ens_oof += w1 * oof_predictions[names[1]]
+                    ens_oof += w2 * oof_predictions[names[2]]
+                    loss = log_loss(y_true, ens_oof)
+                    if loss < best_loss:
+                        best_loss = loss
+                        best_weights = {names[0]: w0, names[1]: w1, names[2]: w2}
+        else:
+            # 4+ models: coarser grid
+            for w0 in np.arange(0.0, 1.1, 0.2):
+                for w1 in np.arange(0.0, 1.1 - w0, 0.2):
+                    for w2 in np.arange(0.0, 1.1 - w0 - w1, 0.2):
+                        w3 = 1.0 - w0 - w1 - w2
+                        if w3 < 0:
+                            continue
+                        ens_oof = np.zeros_like(oof_predictions[names[0]])
+                        ens_oof += w0 * oof_predictions[names[0]]
+                        ens_oof += w1 * oof_predictions[names[1]]
+                        ens_oof += w2 * oof_predictions[names[2]]
+                        ens_oof += w3 * oof_predictions[names[3]]
+                        loss = log_loss(y_true, ens_oof)
+                        if loss < best_loss:
+                            best_loss = loss
+                            best_weights = {names[0]: w0, names[1]: w1, names[2]: w2, names[3]: w3}
 
         print(f"Best OOF log_loss: {best_loss:.4f}")
         print(f"Best weights: {best_weights}")

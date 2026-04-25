@@ -9,7 +9,8 @@
       "WebFetch(domain:freedium-mirror.cfd)",
       "Bash(head:*)",
       "Bash(source ~/.venv/kaggle/bin/activate && kaggle competitions download -c llm-classification-finetuning --path data/ 2>&1)",
-      "Bash(uv:*)"
+      "Bash(uv:*)",
+      "WebFetch(domain:koshurai.medium.com)"
     ]
   }
 }

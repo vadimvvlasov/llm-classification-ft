@@ -9,3 +9,4 @@ numpy>=1.24
 tqdm>=4.65
 accelerate>=0.25
 bitsandbytes>=0.41
+tabpfn>=0.1.0
