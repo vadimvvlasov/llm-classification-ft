@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:arxiv.org)",
+      "WebSearch",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:ai.plainenglish.io)",
+      "WebFetch(domain:freedium-mirror.cfd)",
+      "Bash(head:*)",
+      "Bash(source ~/.venv/kaggle/bin/activate && kaggle competitions download -c llm-classification-finetuning --path data/ 2>&1)",
+      "Bash(uv:*)"
+    ]
+  }
+}
