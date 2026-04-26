@@ -12,7 +12,9 @@
       "Bash(uv:*)",
       "WebFetch(domain:koshurai.medium.com)",
       "Bash(grep:*)",
-      "Bash(~/.local/bin/uv pip:*)"
+      "Bash(~/.local/bin/uv pip:*)",
+      "Bash(git remote:*)",
+      "Bash(git push:*)"
     ]
   }
 }
